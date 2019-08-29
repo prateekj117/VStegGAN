@@ -1,0 +1,11 @@
+/checkpoints_s/*
+/.idea/*
+/.vscode/*
+/hide_net.pyc
+/hide_net1.pyc
+job.sh
+machines.list
+out.o
+/reveal_net1.pyc
+/reveal_net.pyc
+/venv/*
