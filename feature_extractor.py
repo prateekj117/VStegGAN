@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-def feature_network(secret):
+def feature_network(secret, weights=None):
     with tf.variable_scope('f_net'):
       net = tf.layers.conv3d(inputs=secret, filters=64, kernel_size=3, padding='SAME', activation=tf.nn.relu,
                            kernel_initializer=tf.constant_initializer(weights[0]),
@@ -40,4 +40,6 @@ def feature_network(secret):
 
       output = tf.layers.conv3d(net,3,3,padding='same',activation=tf.nn.sigmoid,data_format='channels_last')
 
-      return out
+      print(output)
+
+      return output

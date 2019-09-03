@@ -7,14 +7,18 @@ Created on Wed Apr 17 2019
 
 import hide_net1
 import reveal_net1
+import feature_extractor
 import tensorflow as tf
 import os
 import cv2
 import numpy as np
 import pickle
+import scipy.io as sio
 from time import time
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 test_loc = '../VStegNET-master/ucf/test/'
 train_loc = '../VStegNET-master/ucf/train/'
@@ -119,7 +123,10 @@ class SingleSizeModel():
         # reveal_output = revealing_net.revealing_network(hiding_output)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, reveal_output = revealing_net.revealing_network(hiding_output)
-        hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor)
+        weights = sio.loadmat('pretrained/c3d_ucf101_tf.mat', squeeze_me=True)['weights']
+        feature_output = feature_extractor.feature_network(secret_tensor, weights=weights)
+        # print(feature_output)
+        hiding_output = hide_net1.hiding_network(cover_tensor, feature_output)
         reveal_output = reveal_net1.revealing_network(hiding_output)
 
         loss_op, secret_loss_op, cover_loss_op = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, beta=self.beta)
