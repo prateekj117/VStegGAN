@@ -125,7 +125,8 @@ class SingleSizeModel():
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, reveal_output = revealing_net.revealing_network(hiding_output)
         weights = sio.loadmat('pretrained/c3d_ucf101_tf.mat', squeeze_me=True)['weights']
         feature_output = feature_extractor.feature_network(secret_tensor, weights=weights)
-        # print(feature_output)
+        multiples = [1, 8, 30, 32, 1]
+        feature_output = tf.tile(feature_output, multiples)
         hiding_output = hide_net1.hiding_network(cover_tensor, feature_output)
         reveal_output = reveal_net1.revealing_network(hiding_output)
 
