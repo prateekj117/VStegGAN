@@ -5,8 +5,10 @@ Created on Wed Apr 17 2019
 @author: Suraj, am7
 """
 
-import hide_net1
-import reveal_net1
+import hide_net1 #import hiding_network(cover, secret)
+import reveal_net1 #import revealing_network(container)
+import discriminator_net1
+
 import tensorflow as tf
 import os
 import cv2
@@ -18,21 +20,27 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 test_loc = '../VStegNET-master/ucf/test/'
 train_loc = '../VStegNET-master/ucf/train/'
+
 input_shape_cover = (None, 8, 240, 320, 3)
 input_shape_secret = (None, 8, 240, 320, 3)
+
 beta = 0.75
+d_beta = 1.0
+
+EPS = 1e-12
 
 def convert(x):
     return int(x)
 
 
 class SingleSizeModel():
-    # def get_noise_layer_op(self,tensor,std=.1):
+    # def get_noise_layer_op(self, tensor, std=.1):
     #     with tf.variable_scope("noise_layer"):
-    #         return tensor + tf.random_normal(shape=tf.shape(tensor), mean=0.0, stddev=std, dtype=tf.float32) 
+    #         return tensor + tf.random_normal(shape=tf.shape(tensor), mean=0.0, stddev=std, dtype=tf.float32)
 
-    def __init__(self, input_shape_cover, input_shape_secret, beta):
-        
+    def __init__(self, input_shape_cover, input_shape_secret, beta, d_beta, EPS):
+
+        #declarations
         self.checkpoint_dir = 'checkpoints_s'
         self.model_name = 'VStegNet'
         self.dataset_name = 'ucf'
@@ -44,6 +52,7 @@ class SingleSizeModel():
         self.frames_per_batch = 8
         self.batch_size = 1
 
+        #create log_dir, checkpoint_dir and test_dir
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
         if not os.path.exists(self.test_dir_all):
@@ -51,28 +60,35 @@ class SingleSizeModel():
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
-        self.cover_tensor_data_test, self.secret_tensor_data_test = self.get_test_data()
-        self.tensor_data_train = self.get_train_data()
+        #loading data
+        self.cover_tensor_data_test, self.secret_tensor_data_test = self.get_test_data() #returns path to 500 cover videos and 500 secret videos taken both from test and train location
+        self.tensor_data_train = self.get_train_data()  #path of every directory in the train folder
 
         self.beta = beta
+        self.EPS = EPS
+        self.d_beta = d_beta
         self.learning_rate = 0.0001
+
         self.sess = tf.InteractiveSession()
-        
-        self.secret_tensor = tf.placeholder(shape=input_shape_secret, dtype=tf.float32, name="input_secret")
-        self.cover_tensor = tf.placeholder(shape=input_shape_cover, dtype=tf.float32, name="input_cover")
-        self.global_step_tensor = tf.Variable(0, trainable=False, name='global_step')
+
+        self.secret_tensor = tf.placeholder(shape=input_shape_secret, dtype=tf.float32, name="input_secret") #placeholder for secret frames
+        self.cover_tensor = tf.placeholder(shape=input_shape_cover, dtype=tf.float32, name="input_cover") #placeholder for cover frames
+
+        self.global_step_tensor = tf.Variable(0, trainable=False, name='global_step') #Variable initialized to 0, increments after every training step i.e., after the variable have been updated
 
         # self.train_op_cov, self.train_op_sec, self.summary_op, self.loss_op, self.secret_loss_op,self.cover_loss_op = self.prepare_training_graph(self.secret_tensor,self.cover_tensor,self.global_step_tensor)
-        self.train_op_cov, self.summary_op, self.loss_op,self.secret_loss_op,self.cover_loss_op = self.prepare_training_graph(self.secret_tensor,self.cover_tensor,self.global_step_tensor)
+        self.train_op_cov, self.summary_op, self.loss_op, self.secret_loss_op, self.cover_loss_op = self.prepare_training_graph(self.secret_tensor, self.cover_tensor, self.global_step_tensor)
 
+        #summary writer for tensorboard
         self.writer = tf.summary.FileWriter(self.log_dir,self.sess.graph)
 
         # self.hiding_output, self.reveal_output, self.summary_op, self.loss_op,self.secret_loss_op,self.cover_loss_op, self.conv1_1, self.conv1_2, self.conv1_3, self.conv1_4, self.conv1, self.conv2_1, self.conv2_2, self.conv2_3, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6, self.conv7, self.conv8, self.conv9, self.conv1_1_r, self.conv1_2_r, self.conv1_3_r, self.conv1_4_r, self.conv1_r, self.conv2_1_r, self.conv2_2_r, self.conv2_3_r, self.conv2_r, self.conv3_r, self.conv4_r, self.conv5_r, self.conv6_r, self.conv7_r, self.conv8_r, self.conv9_r = self.prepare_test_graph(self.cover_tensor, self.secret_tensor)
 
 
         self.sess.run(tf.global_variables_initializer())
-        
 
+
+    #returns pair of 500 video paths for testing (secret, cover) pair
     def get_test_data(self):
 
         dirs = [test_loc + dir_name for dir_name in os.listdir(test_loc)]
@@ -100,6 +116,7 @@ class SingleSizeModel():
 
         # return covers[:2], secrets[:2]
 
+    #returns path of all the videos in the train directory
     def get_train_data(self):
 
         dirs = os.listdir(train_loc)
@@ -111,19 +128,25 @@ class SingleSizeModel():
             dat.append(train_loc + dirs[i])
 
         return dat
-    
 
-    def prepare_training_graph(self,secret_tensor,cover_tensor,global_step_tensor):
-    
+
+    def prepare_training_graph(self,secret_tensor, cover_tensor, global_step_tensor):
+
         # hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
         # reveal_output = revealing_net.revealing_network(hiding_output)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, reveal_output = revealing_net.revealing_network(hiding_output)
-        hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor)
-        reveal_output = reveal_net1.revealing_network(hiding_output)
+        hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor) #returns the container video frames
+        reveal_output = reveal_net1.revealing_network(hiding_output) #returns the secret video frames extracted from the cover video frame
 
-        loss_op, secret_loss_op, cover_loss_op = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, beta=self.beta)
-    
+        with tf.name_scope("discriminator"):
+            with tf.variable_scope("discriminating_network"):
+                predict_real = discriminator_net1.discriminating_network(cover_tensor)
+            with tf.variable_scope("discriminating_network", reuse=True):
+                predict_fake = discriminator_net1.discriminating_network(hiding_output)
+
+        loss_op, secret_loss_op, cover_loss_op, discriminator_loss, generator_loss = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, predict_real, predict_fake, beta=self.beta, d_beta=self.d_beta, EPS=self.EPS)
+
         # t_vars = tf.trainable_variables()
         # h_vars = [var for var in t_vars if 'hide_net' in var.name]
         # r_vars = [var for var in t_vars if 'reveal_net' in var.name]
@@ -139,9 +162,9 @@ class SingleSizeModel():
         merged_summary_op = tf.summary.merge_all()
 
         # return minimize_op_cov, minimize_op_sec, merged_summary_op, loss_op,secret_loss_op,cover_loss_op
-        return minimize_op_cov, merged_summary_op, loss_op,secret_loss_op,cover_loss_op
+        return minimize_op_cov, merged_summary_op, loss_op, secret_loss_op, cover_loss_op
 
-    
+
     def prepare_test_graph(self, cover_tensor, secret_tensor):
         with tf.variable_scope("",reuse=True):
 
@@ -150,8 +173,14 @@ class SingleSizeModel():
             # conv1_1, conv1_2, conv1_3, conv1_4, conv1, conv2_1, conv2_2, conv2_3, conv2, conv3, conv4, conv5, conv6, conv7, conv8, conv9, hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
             # conv1_1_r, conv1_2_r, conv1_3_r, conv1_4_r, conv1_r, conv2_1_r, conv2_2_r, conv2_3_r, conv2_r, conv3_r, conv4_r, conv5_r, conv6_r, conv7_r, conv8_r, conv9_r, reveal_output = revealing_net.revealing_network(hiding_output)
 
-            loss_op, secret_loss_op, cover_loss_op = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output)
-        
+            with tf.name_scope("discriminator"):
+                with tf.variable_scope("discriminating_network", reuse=True):
+                    predict_real = discriminator_net1.discriminating_network(cover_tensor)
+                with tf.variable_scope("discriminating_network", reuse=True):
+                    predict_fake = discriminator_net1.discriminating_network(hiding_output)
+
+            loss_op, secret_loss_op, cover_loss_op, discriminator_loss, generator_loss = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, predict_real, predict_fake, beta=self.beta, d_beta=self.d_beta, EPS=self.EPS)
+
             tf.summary.scalar('loss', loss_op,family='test')
             tf.summary.scalar('reveal_net_loss', secret_loss_op,family='test')
             tf.summary.scalar('cover_net_loss', cover_loss_op,family='test')
@@ -162,7 +191,8 @@ class SingleSizeModel():
             # return hiding_output, reveal_output, merged_summary_op, loss_op, secret_loss_op, cover_loss_op, conv1_1, conv1_2, conv1_3, conv1_4, conv1, conv2_1, conv2_2, conv2_3, conv2, conv3, conv4, conv5, conv6, conv7, conv8, conv9, conv1_1_r, conv1_2_r, conv1_3_r, conv1_4_r, conv1_r, conv2_1_r, conv2_2_r, conv2_3_r, conv2_r, conv3_r, conv4_r, conv5_r, conv6_r, conv7_r, conv8_r, conv9_r
 
 
-    def get_loss_op(self,secret_true,secret_pred,cover_true,cover_pred,beta=0.75):
+    #returns the final loss which is the weighted sum of cover_mse and secret_mse, also returns secret_mse and cover_mse
+    def get_loss_op(self, secret_true, secret_pred, cover_true, cover_pred, predict_real, predict_fake, beta=0.75, d_beta=1.0, EPS=1e-12):
 
         with tf.variable_scope("losses"):
 
@@ -170,11 +200,14 @@ class SingleSizeModel():
             secret_mse = tf.losses.mean_squared_error(secret_true, secret_pred)
             cover_mse = tf.losses.mean_squared_error(cover_true, cover_pred)
 
-            final_loss = cover_mse + beta * secret_mse
+            discriminator_loss = tf.reduce_mean(-(tf.log(predict_real+EPS) + tf.log(1-predict_fake+EPS)))
+            generator_loss = tf.reduce_mean(-tf.log(predict_fake+EPS))
 
-            return final_loss , secret_mse , cover_mse
-        
-    
+            final_loss = cover_mse + d_beta*generator_loss + beta*secret_mse
+
+            return final_loss , secret_mse , cover_mse, discriminator_loss, generator_loss
+
+
     @property
     def model_dir(self):
         return "{}_{}_{}_{}_{}".format(
@@ -183,7 +216,7 @@ class SingleSizeModel():
     @property
     def test_dir(self):
         return "{}_{}_{}_{}_{}_test".format(
-            self.model_name, self.dataset_name, self.img_height, self.img_width, self.beta)    
+            self.model_name, self.dataset_name, self.img_height, self.img_width, self.beta)
 
 
     def save(self, checkpoint_dir, step):
@@ -194,6 +227,7 @@ class SingleSizeModel():
 
         self.saver.save(self.sess, os.path.join(checkpoint_dir, self.model_name+'.model'), global_step=step)
 
+    #How checkpoints are loaded
     def load(self, checkpoint_dir):
         import re
         print(" [*] Reading checkpoints...")
@@ -209,13 +243,13 @@ class SingleSizeModel():
             return True, counter
         else:
             print(" [*] Failed to find a checkpoint")
-            return False, 0   
-    
+            return False, 0
 
+    #training step
     def train(self):
 
         vids = 100000
-        
+
         self.saver = tf.train.Saver(max_to_keep=2)
 
         could_load, checkpoint_counter = self.load(self.checkpoint_dir)
@@ -243,6 +277,7 @@ class SingleSizeModel():
         #     t_vars[i].assign(initial_weights_5038[i])
         # print ('assigned weights successfully.')
 
+        #returns a set of 8 frames from the base_dir starting from index ind with frame names stored in frame_names
         def load_t(base_dir, frame_names, ind):
 
             batch = []
@@ -255,21 +290,30 @@ class SingleSizeModel():
 
             return np.array(batch)
 
+
         def generator():
 
             training_batch_covers = []
             training_batch_secrets = []
             b = 0
 
+            #since batch_size is 1, we start from count which is the number of times variables have been updated (which will be equal to number of videos processed) and we go till videos
             for i in range(count, vids):
-                c_path = np.random.choice(self.tensor_data_train)
-                s_path = np.random.choice(self.tensor_data_train)
+                c_path = np.random.choice(self.tensor_data_train) #pick a random cover video
+                s_path = np.random.choice(self.tensor_data_train) #Pick a random secret video
+
+                #ensure secret is different from cover video
                 while s_path == c_path:
                     s_path = np.random.choice(self.tensor_data_train)
+
+                #the number of frames to be picked from both n1 and n2 should be a multiple of 8 and both n1 and n2 should have that many frames
                 n1 = len(os.listdir(c_path))
                 n2 = len(os.listdir(s_path))
                 t = int(min(n1, n2) / self.frames_per_batch)
+
+                #frame_names sorted in increasing order and taken from 0 to t*frames_per_batch
                 frs = sorted(os.listdir(c_path), key=lambda x: int(x.split('.')[0]))[:t * self.frames_per_batch]
+
                 for j in range(t):
                     cov_tens = load_t(c_path, frs, j)
                     sec_tens = load_t(s_path, frs, j)
@@ -291,12 +335,12 @@ class SingleSizeModel():
 
         i = 1
         for covers, secrets, vid in generator():
-            
-            # _, gs, sl = self.sess.run([self.train_op_sec, self.global_step_tensor, self.secret_loss_op], 
+
+            # _, gs, sl = self.sess.run([self.train_op_sec, self.global_step_tensor, self.secret_loss_op],
             #                             feed_dict={"input_secret:0":secrets, "input_cover:0":covers})
-                
-            _, gs, tl, sl, cl = self.sess.run([self.train_op_cov, self.global_step_tensor, 
-                                    self.loss_op, self.secret_loss_op, self.cover_loss_op], 
+
+            _, gs, tl, sl, cl = self.sess.run([self.train_op_cov, self.global_step_tensor,
+                                    self.loss_op, self.secret_loss_op, self.cover_loss_op],
                                     feed_dict={"input_secret:0":secrets, "input_cover:0":covers})
 
             if i % 10 == 0:
@@ -309,10 +353,10 @@ class SingleSizeModel():
             print('Video: '+str(vid)+' Iteration: '+str(i)+' Time: '+str(time() - start_time)
                     +' Loss: '+str(tl)+' Cover_Loss: '+str(cl)+' Secret_Loss: '+str(sl))
 
-            if i % 200 == 0: 
+            if i % 200 == 0:
                 self.save(self.checkpoint_dir, vid)
 
-
+    #test step
     def test(self):
 
         self.saver = tf.train.Saver(max_to_keep=2)
@@ -364,7 +408,7 @@ class SingleSizeModel():
         def generator_random():
             # for i in range(len(self.cover_tensor_data_test)):
             for i in range(5):
-                p = np.random.choice(len(self.cover_tensor_data_test))    
+                p = np.random.choice(len(self.cover_tensor_data_test))
                 c_name = self.cover_tensor_data_test[p].split('/')[-1]
                 s_name = self.secret_tensor_data_test[p].split('/')[-1]
                 frame_names = sorted(os.listdir(self.cover_tensor_data_test[p]), key=lambda x: int(x.split('.')[0]))
@@ -389,7 +433,7 @@ class SingleSizeModel():
         def generator_random_all():
             # for i in range(len(self.cover_tensor_data_test)):
             for j in range(5):
-                p = np.random.choice(len(self.cover_tensor_data_test), self.frames_per_batch)    
+                p = np.random.choice(len(self.cover_tensor_data_test), self.frames_per_batch)
                 c_name = ''
                 for i in range(self.frames_per_batch):
                     c_name += self.cover_tensor_data_test[p[i]].split('/')[-1]
@@ -427,12 +471,12 @@ class SingleSizeModel():
             if prev_vid != vid:
                 i = 0
                 prev_vid = vid
-            
+
             print ('Testing video: ' + str(vid) + ', c_name: '+c_name+', s_name: '+s_name)
-            
+
             cover_loss = 0
             secret_loss = 0
-            cover_accuracy = 0 
+            cover_accuracy = 0
 
             test_dir = os.path.join(self.test_dir_all, self.test_dir)
             video_dir = os.path.join(test_dir, 'c_'+c_name+'_s_'+s_name)
@@ -453,30 +497,30 @@ class SingleSizeModel():
                 os.makedirs(revealed_secret_dir)
                 os.makedirs(diff_cover_container_dir)
                 os.makedirs(diff_secret_revealed_dir)
-        
+
             # hiding_b, reveal_b, c11, c12, c13, c14, c1, c21, c22, c23, c2, c3, c4, c5, c6, c7, c8, c9, c11_r, c12_r, c13_r, c14_r, c1_r, c21_r, c22_r, c23_r, c2_r, c3_r, c4_r, c5_r, c6_r, c7_r, c8_r, c9_r = self.sess.run([
-            #     self.hiding_output, self.reveal_output, self.conv1_1, self.conv1_2, self.conv1_3, self.conv1_4, self.conv1, self.conv2_1, self.conv2_2, self.conv2_3, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6, self.conv7, self.conv8, self.conv9, 
+            #     self.hiding_output, self.reveal_output, self.conv1_1, self.conv1_2, self.conv1_3, self.conv1_4, self.conv1, self.conv2_1, self.conv2_2, self.conv2_3, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6, self.conv7, self.conv8, self.conv9,
             #     self.conv1_1_r, self.conv1_2_r, self.conv1_3_r, self.conv1_4_r, self.conv1_r, self.conv2_1_r, self.conv2_2_r, self.conv2_3_r, self.conv2_r, self.conv3_r, self.conv4_r, self.conv5_r, self.conv6_r, self.conv7_r, self.conv8_r, self.conv9_r],
             #                                     feed_dict={"input_secret:0": test_secret, "input_cover:0": test_cover})
-            hiding_b, reveal_b = self.sess.run([self.hiding_output, self.reveal_output], 
+            hiding_b, reveal_b = self.sess.run([self.hiding_output, self.reveal_output],
                                                 feed_dict={"input_secret:0": test_secret, "input_cover:0": test_cover})
 
             # for j in range(self.frames_per_batch):
             #     im = np.reshape(hiding_b[0][j] * 255, (self.img_height, self.img_width, self.channels))
             #     cv2.imwrite(container_dir+'/'+str(i * self.frames_per_batch + j)+'.jpg', im)
-                
+
             #     im = np.reshape(reveal_b[0][j] * 255, (self.img_height, self.img_width, self.channels))
             #     cv2.imwrite(revealed_secret_dir+'/'+str(i * self.frames_per_batch + j)+'.jpg', im)
-                
+
             #     im = np.reshape(test_cover[0][j] * 255, (self.img_height, self.img_width, self.channels))
             #     cv2.imwrite(cover_dir+'/'+str(i * self.frames_per_batch + j)+'.jpg', im)
-                
+
             #     im = np.reshape(test_secret[0][j] * 255, (self.img_height, self.img_width, self.channels))
             #     cv2.imwrite(secret_dir+'/'+str(i * self.frames_per_batch + j)+'.jpg', im)
-                
+
             #     im = np.reshape(np.absolute(hiding_b[0][j] - test_cover[0][j]) * 255, (self.img_height, self.img_width, self.channels))
             #     cv2.imwrite(diff_cover_container_dir+'/'+str(i * self.frames_per_batch + j)+'.jpg', im)
-                
+
             #     im = np.reshape(np.absolute(reveal_b[0][j] - test_secret[0][j]) * 255, (self.img_height, self.img_width, self.channels))
             #     cv2.imwrite(diff_secret_revealed_dir+'/'+str(i * self.frames_per_batch + j)+'.jpg', im)
 
@@ -512,44 +556,44 @@ class SingleSizeModel():
             # np.save(video_dir+'/c7_r', c7_r[0])
             # np.save(video_dir+'/c8_r', c8_r[0])
             # np.save(video_dir+'/c9_r', c9_r[0])
-            
-            
+
+
             # total_frames += self.frames_per_batch
 
             for j in range(self.frames_per_batch):
                 im = np.reshape(hiding_b[0][j] * 255, (self.img_height, self.img_width, self.channels))
                 cv2.imwrite(container_dir+'/'+file_names[j], im)
-                
+
                 im = np.reshape(reveal_b[0][j] * 255, (self.img_height, self.img_width, self.channels))
                 cv2.imwrite(revealed_secret_dir+'/'+file_names[j], im)
-                
+
                 im = np.reshape(test_cover[0][j] * 255, (self.img_height, self.img_width, self.channels))
                 cv2.imwrite(cover_dir+'/'+file_names[j], im)
-                
+
                 im = np.reshape(test_secret[0][j] * 255, (self.img_height, self.img_width, self.channels))
                 cv2.imwrite(secret_dir+'/'+file_names[j], im)
-                
+
                 im = np.reshape(np.absolute(hiding_b[0][j] - test_cover[0][j]) * 255, (self.img_height, self.img_width, self.channels))
                 cv2.imwrite(diff_cover_container_dir+'/'+file_names[j], im)
-                
+
                 im = np.reshape(np.absolute(reveal_b[0][j] - test_secret[0][j]) * 255, (self.img_height, self.img_width, self.channels))
                 cv2.imwrite(diff_secret_revealed_dir+'/'+file_names[j], im)
-            
+
             total_frames += self.frames_per_batch
 
             i += 1
 
         total_time = time() - start_time
         pickle.dump(total_time, open('total_time_new.pkl', 'wb'))
-        time_per_frame = float(total_time) / total_frames 
+        time_per_frame = float(total_time) / total_frames
         pickle.dump(time_per_frame, open('time_per_frame_new.pkl', 'wb'))
         print ('Total time: '+str(total_time)+' Time Per Frame: '+str(time_per_frame))
-        
+
 
 def show_all_variables():
     model_vars = tf.trainable_variables()
     tf.contrib.slim.model_analyzer.analyze_vars(model_vars, print_info=True)
-  
+
 
 m = SingleSizeModel(input_shape_cover=input_shape_cover, input_shape_secret=input_shape_secret, beta=beta)
 # show_all_variables()
