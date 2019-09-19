@@ -14,7 +14,7 @@ import numpy as np
 import pickle
 from time import time
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 test_loc = '../VStegNET-master/ucf/test/'
 train_loc = '../VStegNET-master/ucf/train/'

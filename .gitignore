@@ -9,3 +9,6 @@ out.o
 /reveal_net1.pyc
 /reveal_net.pyc
 /venv/*
+/logs_s
+/pretrained
+/feature_autoencoder.pyc
