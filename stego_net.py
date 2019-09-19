@@ -7,9 +7,11 @@ Created on Wed Apr 17 2019
 
 import hide_net1
 import reveal_net1
+import feature_autoencoder
 import tensorflow as tf
 import os
 import cv2
+import scipy.io as sio
 import numpy as np
 import pickle
 from time import time
@@ -119,7 +121,9 @@ class SingleSizeModel():
         # reveal_output = revealing_net.revealing_network(hiding_output)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, reveal_output = revealing_net.revealing_network(hiding_output)
-        hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor)
+        weights = sio.loadmat('pretrained/c3d_ucf101_tf.mat', squeeze_me=True)['weights']
+        encoded_secret = feature_autoencoder.feature_network(secret_tensor, weights=weights)
+        hiding_output = hide_net1.hiding_network(cover_tensor, encoded_secret)
         reveal_output = reveal_net1.revealing_network(hiding_output)
 
         loss_op, secret_loss_op, cover_loss_op = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, beta=self.beta)
