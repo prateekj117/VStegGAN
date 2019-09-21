@@ -8,6 +8,7 @@ Created on Wed Apr 17 2019
 import hide_net1 #import hiding_network(cover, secret)
 import reveal_net1 #import revealing_network(container)
 import discriminator_net1
+import feature_autoencoder
 
 import tensorflow as tf
 import os
@@ -25,7 +26,6 @@ input_shape_cover = (None, 8, 240, 320, 3)
 input_shape_secret = (None, 8, 240, 320, 3)
 
 beta = 0.75
-d_beta = 1.0
 
 EPS = 1e-12
 
@@ -38,7 +38,7 @@ class SingleSizeModel():
     #     with tf.variable_scope("noise_layer"):
     #         return tensor + tf.random_normal(shape=tf.shape(tensor), mean=0.0, stddev=std, dtype=tf.float32)
 
-    def __init__(self, input_shape_cover, input_shape_secret, beta, d_beta, EPS):
+    def __init__(self, input_shape_cover, input_shape_secret, beta, EPS):
 
         #declarations
         self.checkpoint_dir = 'checkpoints_s'
@@ -66,7 +66,6 @@ class SingleSizeModel():
 
         self.beta = beta
         self.EPS = EPS
-        self.d_beta = d_beta
         self.learning_rate = 0.0001
 
         self.sess = tf.InteractiveSession()
@@ -77,7 +76,7 @@ class SingleSizeModel():
         self.global_step_tensor = tf.Variable(0, trainable=False, name='global_step') #Variable initialized to 0, increments after every training step i.e., after the variable have been updated
 
         # self.train_op_cov, self.train_op_sec, self.summary_op, self.loss_op, self.secret_loss_op,self.cover_loss_op = self.prepare_training_graph(self.secret_tensor,self.cover_tensor,self.global_step_tensor)
-        self.train_op_cov, self.summary_op, self.loss_op, self.secret_loss_op, self.cover_loss_op = self.prepare_training_graph(self.secret_tensor, self.cover_tensor, self.global_step_tensor)
+        self.train_op_cov, self.train_discriminator, self.train_generator, self.summary_op, self.loss_op, self.secret_loss_op, self.cover_loss_op, self.discriminator_loss, self.generator_loss = self.prepare_training_graph(self.secret_tensor, self.cover_tensor, self.global_step_tensor)
 
         #summary writer for tensorboard
         self.writer = tf.summary.FileWriter(self.log_dir,self.sess.graph)
@@ -136,8 +135,14 @@ class SingleSizeModel():
         # reveal_output = revealing_net.revealing_network(hiding_output)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
         # _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, reveal_output = revealing_net.revealing_network(hiding_output)
-        hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor) #returns the container video frames
-        reveal_output = reveal_net1.revealing_network(hiding_output) #returns the secret video frames extracted from the cover video frame
+        with tf.variable_scope("extracting_netowrk"):
+            _, encoded_secret = feature_autoencoder.feature_network(secret_tensor)
+
+        with tf.variable_scope("hiding_network"):
+            hiding_output = hide_net1.hiding_network(cover_tensor, encoded_secret) #returns the container video frames
+
+        with tf.variable_scope("revealing_network"):
+            reveal_output = reveal_net1.revealing_network(hiding_output) #returns the secret video frames extracted from the cover video frame
 
         with tf.name_scope("discriminator"):
             with tf.variable_scope("discriminating_network"):
@@ -150,7 +155,12 @@ class SingleSizeModel():
         # t_vars = tf.trainable_variables()
         # h_vars = [var for var in t_vars if 'hide_net' in var.name]
         # r_vars = [var for var in t_vars if 'reveal_net' in var.name]
+        disc_vars = [var for var in tf.trainable_variables() if var.name.startswith("discriminating_network")]
+        feat_vars = [var for var in tf.trainable_variables() if var.name.stratswith("extracting_netowrk")]
+        hidi_vars = [var for var in tf.trainable_variables() if var.name.stratswith("hiding_network")]
 
+        minimize_disc = tf.train.AdamOptimizer(self.learning_rate).minimize(discriminator_loss, var_list=disc_vars, global_step=global_step_tensor)
+        minimize_gene = tf.train.AdamOptimizer(self.learning_rate).minimize(generator_loss, var_list=feat_vars+hidi_vars, global_step=global_step_tensor)
         minimize_op_cov = tf.train.AdamOptimizer(self.learning_rate).minimize(loss_op, global_step=global_step_tensor)
         # minimize_op_cov = tf.train.AdamOptimizer(self.learning_rate).minimize(loss_op, var_list=h_vars, global_step=global_step_tensor)
         # minimize_op_sec = tf.train.AdamOptimizer(self.learning_rate).minimize(secret_loss_op, var_list=r_vars, global_step=global_step_tensor)
@@ -158,18 +168,25 @@ class SingleSizeModel():
         tf.summary.scalar('loss', loss_op, family='train')
         tf.summary.scalar('reveal_net_loss', secret_loss_op, family='train')
         tf.summary.scalar('cover_net_loss', cover_loss_op, family='train')
+        tf.summary.scalar('discriminator_loss', discriminator_loss, family='train')
+        tf.summary.scalar('generator_loss', generator_loss, family='train')
 
         merged_summary_op = tf.summary.merge_all()
 
         # return minimize_op_cov, minimize_op_sec, merged_summary_op, loss_op,secret_loss_op,cover_loss_op
-        return minimize_op_cov, merged_summary_op, loss_op, secret_loss_op, cover_loss_op
+        return minimize_op_cov, minimize_disc, minimize_gene, merged_summary_op, loss_op, secret_loss_op, cover_loss_op, discriminator_loss, generator_loss
 
 
     def prepare_test_graph(self, cover_tensor, secret_tensor):
-        with tf.variable_scope("",reuse=True):
 
-            hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor)
-            reveal_output = reveal_net1.revealing_network(hiding_output)
+            with tf.variable_scope("extracting_network", reuse=True):
+                _, encoded_secret = feature_autoencoder.feature_network(secret_tensor)
+
+            with tf.variable_scope("hiding_network", reuse=True):
+                hiding_output = hide_net1.hiding_network(cover_tensor, secret_tensor)
+
+            with tf.variable_scope("revealing_network", reuse=True):
+                reveal_output = reveal_net1.revealing_network(hiding_output)
             # conv1_1, conv1_2, conv1_3, conv1_4, conv1, conv2_1, conv2_2, conv2_3, conv2, conv3, conv4, conv5, conv6, conv7, conv8, conv9, hiding_output = hiding_net.hiding_network(cover_tensor, secret_tensor)
             # conv1_1_r, conv1_2_r, conv1_3_r, conv1_4_r, conv1_r, conv2_1_r, conv2_2_r, conv2_3_r, conv2_r, conv3_r, conv4_r, conv5_r, conv6_r, conv7_r, conv8_r, conv9_r, reveal_output = revealing_net.revealing_network(hiding_output)
 
@@ -179,20 +196,22 @@ class SingleSizeModel():
                 with tf.variable_scope("discriminating_network", reuse=True):
                     predict_fake = discriminator_net1.discriminating_network(hiding_output)
 
-            loss_op, secret_loss_op, cover_loss_op, discriminator_loss, generator_loss = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, predict_real, predict_fake, beta=self.beta, d_beta=self.d_beta, EPS=self.EPS)
+            loss_op, secret_loss_op, cover_loss_op, discriminator_loss, generator_loss = self.get_loss_op(secret_tensor, reveal_output, cover_tensor, hiding_output, predict_real, predict_fake, beta=self.beta, EPS=self.EPS)
 
             tf.summary.scalar('loss', loss_op,family='test')
             tf.summary.scalar('reveal_net_loss', secret_loss_op,family='test')
             tf.summary.scalar('cover_net_loss', cover_loss_op,family='test')
+            tf.summary.scalar('discriminator_loss', discriminator_loss, family='train')
+            tf.summary.scalar('generator_loss', generator_loss, family='train')
 
             merged_summary_op = tf.summary.merge_all()
 
-            return hiding_output, reveal_output, merged_summary_op, loss_op, secret_loss_op, cover_loss_op
+            return hiding_output, reveal_output, merged_summary_op, loss_op, secret_loss_op, cover_loss_op, discriminator_loss, generator_loss
             # return hiding_output, reveal_output, merged_summary_op, loss_op, secret_loss_op, cover_loss_op, conv1_1, conv1_2, conv1_3, conv1_4, conv1, conv2_1, conv2_2, conv2_3, conv2, conv3, conv4, conv5, conv6, conv7, conv8, conv9, conv1_1_r, conv1_2_r, conv1_3_r, conv1_4_r, conv1_r, conv2_1_r, conv2_2_r, conv2_3_r, conv2_r, conv3_r, conv4_r, conv5_r, conv6_r, conv7_r, conv8_r, conv9_r
 
 
     #returns the final loss which is the weighted sum of cover_mse and secret_mse, also returns secret_mse and cover_mse
-    def get_loss_op(self, secret_true, secret_pred, cover_true, cover_pred, predict_real, predict_fake, beta=0.75, d_beta=1.0, EPS=1e-12):
+    def get_loss_op(self, secret_true, secret_pred, cover_true, cover_pred, predict_real, predict_fake, beta=0.75, EPS=1e-12):
 
         with tf.variable_scope("losses"):
 
@@ -203,7 +222,7 @@ class SingleSizeModel():
             discriminator_loss = tf.reduce_mean(-(tf.log(predict_real+EPS) + tf.log(1-predict_fake+EPS)))
             generator_loss = tf.reduce_mean(-tf.log(predict_fake+EPS))
 
-            final_loss = cover_mse + d_beta*generator_loss + beta*secret_mse
+            final_loss = cover_mse + beta*secret_mse
 
             return final_loss , secret_mse , cover_mse, discriminator_loss, generator_loss
 
@@ -339,8 +358,8 @@ class SingleSizeModel():
             # _, gs, sl = self.sess.run([self.train_op_sec, self.global_step_tensor, self.secret_loss_op],
             #                             feed_dict={"input_secret:0":secrets, "input_cover:0":covers})
 
-            _, gs, tl, sl, cl = self.sess.run([self.train_op_cov, self.global_step_tensor,
-                                    self.loss_op, self.secret_loss_op, self.cover_loss_op],
+            _, _, _, gs, tl, sl, cl, dl, gl = self.sess.run([self.train_op_cov, self.discriminator_train, self.generator_train, self.global_step_tensor,
+                                    self.loss_op, self.secret_loss_op, self.cover_loss_op, self.discriminator_loss, self.generator_train],
                                     feed_dict={"input_secret:0":secrets, "input_cover:0":covers})
 
             if i % 10 == 0:
@@ -351,7 +370,7 @@ class SingleSizeModel():
             i += 1
 
             print('Video: '+str(vid)+' Iteration: '+str(i)+' Time: '+str(time() - start_time)
-                    +' Loss: '+str(tl)+' Cover_Loss: '+str(cl)+' Secret_Loss: '+str(sl))
+                    +' Loss: '+str(tl)+' Cover_Loss: '+str(cl)+' Secret_Loss: '+str(sl)+' Discriminator_Loss: '+str(dl)+' Generator_Loss: '+str(gl) )
 
             if i % 200 == 0:
                 self.save(self.checkpoint_dir, vid)

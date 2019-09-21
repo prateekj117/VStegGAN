@@ -58,7 +58,7 @@ def discriminating_network(discrim_inputs, ndf):
 
         return layers[-1]
 
-input_shape = (None,8,320,240,3)
-discrim_input = tf.placeholder(shape=input_shape, dtype=tf.float32, name='discrim_input')
-prob = discriminating_network(discrim_input, 64)
-print(prob)
+#input_shape = (None,8,320,240,3)
+#discrim_input = tf.placeholder(shape=input_shape, dtype=tf.float32, name='discrim_input')
+#prob = discriminating_network(discrim_input, 64)
+#print(prob)
